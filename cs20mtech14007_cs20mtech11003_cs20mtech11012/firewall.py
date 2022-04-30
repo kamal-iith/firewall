@@ -9,6 +9,9 @@ import pyfiglet
 import binascii
 
 
+BLOCKED_IP_LIST = ["142.250.182.46"]
+
+
 class SimpleFirewall:
     def __init__(self, interface1, interface2):
         self.host1sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
@@ -45,20 +48,24 @@ class SimpleFirewall:
 
         # eth[1] = Source MAC address
         if eth[1] == "52:54:00:d6:10:87":  # Rule1 : Allow IP from external host
-            allow = True
-            packet_type = "External"
 
-            print(ip[4], ip[5])
+            print(ip[4])
 
-            dest_mac, src_mac, type_mac = struct.unpack("! 6s 6s H", raw_data[:14])
+            if ip[4] in BLOCKED_IP_LIST:
+                allow = False
+                packet_type = "External"
+            else:
+                allow = True
+                packet_type = "External"
+                dest_mac, src_mac, type_mac = struct.unpack("! 6s 6s H", raw_data[:14])
 
-            dest_mac = binascii.unhexlify("52:54:00:f7:69:35".replace(":", ""))
+                dest_mac = binascii.unhexlify("52:54:00:f7:69:35".replace(":", ""))
 
-            new_data = struct.pack("! 6s 6s H", dest_mac, src_mac, type_mac)
+                new_data = struct.pack("! 6s 6s H", dest_mac, src_mac, type_mac)
 
-            new_data = new_data + raw_data[14:]
+                new_data = new_data + raw_data[14:]
 
-            self.host1sock.sendall(new_data)
+                self.host1sock.sendall(new_data)
 
         elif eth[1] == "52:54:00:f7:69:35":  # Rule2 : Allow Host1 Packets from host1
             allow = True
