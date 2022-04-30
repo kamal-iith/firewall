@@ -1,3 +1,4 @@
+from curses import raw
 import socket
 import sys
 from os import system
@@ -16,6 +17,9 @@ class SimpleFirewall:
         self.host1sock.bind((interface1, 0))
         self.extsock.bind((interface2, 0))
 
+    def get_ip(self, addr):
+        return ".".join(map(str, addr))
+
     def parseEtherHead(self, raw_data):
         dest, src, prototype = struct.unpack("!6s6sH", raw_data[:14])
         destin_mac_addr = ":".join("%02x" % b for b in dest)
@@ -23,13 +27,28 @@ class SimpleFirewall:
         prototype_field = socket.htons(prototype)
         return destin_mac_addr, src_mac_addr, prototype_field
 
+    def parseIPHead(self, raw_data):
+        version_header_length = raw_data[0]
+        version = version_header_length >> 4
+        header_length = (version_header_length & 15) * 4
+        ttl, proto, src, target = struct.unpack("! 8x B B 2x 4s 4s", raw_data[:20])
+        data = raw_data[header_length:]
+        src = self.get_ip(src)
+        target = self.get_ip(target)
+        return version, header_length, ttl, proto, src, target, data
+
     def decideRule(self, raw_data):
 
         eth = self.parseEtherHead(raw_data)  # destin_mac_addr, src_mac_addr, prototype_field
 
+        ip = self.parseIPHead(raw_data[14:])
+
+        # eth[1] = Source MAC address
         if eth[1] == "52:54:00:d6:10:87":  # Rule1 : Allow IP from external host
             allow = True
             packet_type = "External"
+
+            print(ip[4], ip[5])
 
             dest_mac, src_mac, type_mac = struct.unpack("! 6s 6s H", raw_data[:14])
 
@@ -50,7 +69,6 @@ class SimpleFirewall:
             dest_mac = binascii.unhexlify("52:54:00:d6:10:87".replace(":", ""))
 
             new_data = struct.pack("! 6s 6s H", dest_mac, src_mac, type_mac)
-
             new_data = new_data + raw_data[14:]
 
             self.extsock.sendall(new_data)
@@ -75,8 +93,8 @@ class SimpleFirewall:
 
                 if ret[0]:
                     print("Packet \u001b[42;1m Allowed\u001b[0m\t Packet Type: ", ret[1])
-                # else:
-                #     print("Packet \u001b[41;1m Discarded\u001b[0m\t Packet Type: ", ret[1])
+                else:
+                    print("Packet \u001b[41;1m Discarded\u001b[0m\t Packet Type: ", ret[1])
 
 
 if __name__ == "__main__":
