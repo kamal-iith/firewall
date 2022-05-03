@@ -1,3 +1,4 @@
+from cProfile import label
 import socket
 import click
 import matplotlib.pyplot as plt
@@ -24,79 +25,6 @@ class bcol:
 
 def clean() -> None:
     os.system("cls" if os.name == "nt" else "clear")
-
-
-class SimpleFirewall:
-    def __init__(self, interface1, interface2):
-        self.internal_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
-        self.external_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
-
-        self.internal_socket.bind((interface1, 0))
-        self.external_socket.bind((interface2, 0))
-
-        self.internal_host_mac = "52:54:00:f7:69:35"
-        self.external_host_mac = "52:54:00:d6:10:87"
-
-        self.rules = {"BLOCKED_IP_LIST": ["142.250.182.46"]}
-
-    def get_ip(self, addr):
-        return ".".join(map(str, addr))
-
-    def parse_ethernet(self, raw_data):
-        dest, src, prototype = struct.unpack("!6s6sH", raw_data[:14])
-        destin_mac_addr = ":".join("%02x" % b for b in dest)
-        src_mac_addr = ":".join("%02x" % b for b in src)
-        prototype_field = socket.htons(prototype)
-        return destin_mac_addr, src_mac_addr, prototype_field
-
-    def parse_IP(self, raw_data):
-        version_header_length = raw_data[0]
-        version = version_header_length >> 4
-        header_length = (version_header_length & 15) * 4
-        ttl, proto, src, target = struct.unpack("! 8x B B 2x 4s 4s", raw_data[:20])
-        data = raw_data[header_length:]
-        src = self.get_ip(src)
-        target = self.get_ip(target)
-        return version, header_length, ttl, proto, src, target, data
-
-    def parse_rules(self, raw_data):
-        eth = self.parse_ethernet(raw_data)
-        ip = self.parse_IP(raw_data[14:])
-
-        if eth[1] == self.external_host_mac:
-            # ip[4] == Source IPV4 Address
-            if ip[4] in self.rules["BLOCKED_IP_LIST"]:
-                allow = False
-            else:
-                allow = True
-                dest_mac, src_mac, type_mac = struct.unpack("! 6s 6s H", raw_data[:14])
-                dest_mac = binascii.unhexlify(self.internal_host_mac.replace(":", ""))
-                new_data = struct.pack("! 6s 6s H", dest_mac, src_mac, type_mac) + raw_data[14:]
-                self.internal_socket.sendall(new_data)
-
-        elif eth[1] == self.internal_host_mac:
-            allow = True
-            dest_mac, src_mac, type_mac = struct.unpack("! 6s 6s H", raw_data[:14])
-            dest_mac = binascii.unhexlify(self.external_host_mac.replace(":", ""))
-            new_data = struct.pack("! 6s 6s H", dest_mac, src_mac, type_mac) + raw_data[14:]
-            self.external_socket.sendall(new_data)
-        else:
-            allow = False
-
-        return allow, ip[4]
-
-    def run(self):
-        while True:
-            all_socks = [self.internal_socket, self.external_socket]
-            ready_socks, _, _ = select.select(all_socks, [], [])
-
-            for soc in ready_socks:
-                raw_data, _ = soc.recvfrom(65565)
-                ret, ip = self.parse_rules(raw_data)
-                if ret:
-                    print(f"{ip}: Allowed")
-                else:
-                    print(f"{ip}: Dropped")
 
 
 class Firewall:
@@ -258,23 +186,24 @@ class Firewall:
                 rules_template = {"L2": [], "L3v4": [], "L3v6": [], "L4TCP": [], "L4UDP": [], "ICMP": []}
                 with open("rules.json", "w") as outfile:
                     json.dump(rules_template, outfile)
+
             os.system("sudo gedit rules.json")
 
         except KeyboardInterrupt as e:
 
-            self.load_rules()
+            self.loadRules()
             clean()
             main()
 
-    def parse_rules(self, raw_data):
+    def decideRule(self, raw_data):
 
         start = time.process_time()
         self.parse_L2(raw_data)
         allowed = False
 
         acceptance = []
-        for layer in self.rules_set.keys():
-            for rule in self.rules_set[layer]:
+        for rulecat in self.rules_set.keys():
+            for rule in self.rules_set[rulecat]:
                 for key in rule.keys():
                     if key != "rule_id" and key != "rule":
                         if rule[key] == self.mapping_dict[key]:
@@ -299,7 +228,7 @@ class Firewall:
         end = time.process_time() - start
         return allowed, end
 
-    def run(self, internal_MAC, external_MAC):
+    def startFirewall(self, internal_MAC, external_MAC):
 
         clock = time.time()
 
@@ -318,7 +247,7 @@ class Firewall:
 
                     raw_data, _ = soc.recvfrom(65565)
 
-                    status, ppt = self.parse_rules(raw_data)
+                    status, ppt = self.decideRule(raw_data)
 
                     self.times.append(ppt)
                     self.mean_time = sum(self.times) / len(self.times)
@@ -361,7 +290,7 @@ class Firewall:
 
             except KeyboardInterrupt as e:
                 clean()
-                self.analyse_capture()
+                self.getStatistics()
                 i = True
                 print("Press 'c' to continue...")
 
@@ -371,7 +300,7 @@ class Firewall:
                         i = False
                 main()
 
-    def analyse_capture(self):
+    def getStatistics(self):
 
         print("Firewall Capture Statistics\n")
         print("Mean Packet Processing Time : ", self.mean_time, "\n")
@@ -387,10 +316,10 @@ class Firewall:
         plt.xlabel("Running Time")
         plt.ylabel("Number of allowed/dropped packets")
         plt.grid()
-        plt.legend(["Allowed Packets", "Dropped Packets"])
+        plt.legend(["Allowed", "Dropped"])
         plt.savefig("firewall_statistics.png")
 
-    def load_rules(self):
+    def loadRules(self):
         with open("rules.json", "r") as infile:
             self.rules_set = json.load(infile)
 
@@ -401,40 +330,37 @@ class Firewall:
 
 @click.command()
 @click.option("-d", help="DDos Attack Detection", default=0)
-@click.option("-s", help="Simple Firewall", default=False, is_flag=True)
-def main(d, s):
+def main(d):
+    # python3 firewall.py True 200
     interface1 = "enp1s0"
     interface2 = "enp6s0"
+    firewall = Firewall(interface1, interface2, d)
 
-    if s:
-        simple_firewall = SimpleFirewall(interface1, interface2)
-        simple_firewall.run()
-    else:
+    clean()
+    while True:
 
-        firewall = Firewall(interface1, interface2, d)
-        clean()
-        while True:
+        print("\nStart Firewall with 's', Manage Rules with 'r', Exit with 'e' \n\n")
 
-            print("\nStart Firewall with 's', Manage Rules with 'r', Exit with 'e' \n\n")
-            key = getkey()
-            if key == "s":
-                try:
-                    firewall.load_rules()
-                except FileNotFoundError:
-                    pass
-                clean()
-                firewall.run(internal_MAC="52:54:00:f7:69:35", external_MAC="52:54:00:d6:10:87")
+        key = getkey()
 
-            if key == "r":
-                try:
-                    firewall.load_rules()
-                except FileNotFoundError:
-                    pass
-                firewall.manageRules()
+        if key == "s":
+            try:
+                firewall.loadRules()
+            except FileNotFoundError:
+                pass
+            clean()
+            firewall.startFirewall(internal_MAC="52:54:00:f7:69:35", external_MAC="52:54:00:d6:10:87")
 
-            if key == "e":
-                clean()
-                exit(0)
+        if key == "r":
+            try:
+                firewall.loadRules()
+            except FileNotFoundError:
+                pass
+            firewall.manageRules()
+
+        if key == "e":
+            clean()
+            exit(0)
 
 
 if __name__ == "__main__":
