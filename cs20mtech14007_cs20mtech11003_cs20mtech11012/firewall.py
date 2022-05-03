@@ -1,11 +1,9 @@
-from curses import raw
 import socket
 import sys
 import json
 from struct import *
 import struct
 import select
-import pyfiglet
 import binascii
 
 
@@ -150,11 +148,7 @@ class AdvancedFirewall:
     def decideRule(self, raw_data):
 
         eth = self.parseEtherHead(raw_data)  # destin_mac_addr, src_mac_addr, prototype_field
-        ip = self.parseIPHead(raw_data[14:])
-
         rules = load_rules()
-
-        print(eth[1])
 
         if eth[1] == "52:54:00:f7:69:35":
             allow = True
@@ -168,14 +162,6 @@ class AdvancedFirewall:
             new_data = new_data + raw_data[14:]
 
             self.extsock.sendall(new_data)
-
-        elif eth[1] in rules["Ether_rules"]["src"]:
-            allow = False
-            packet_type = "External"
-
-        elif ip[4] in rules["IPv4rules"]["src"]:
-            allow = False
-            packet_type = "External"
 
         else:
             allow = True
@@ -193,13 +179,8 @@ class AdvancedFirewall:
         return allow, packet_type
 
     def manageRule(self):
-        print("1.ADD RULE\n")
         opt = int(input("Enter Your Option\n"))
         if opt == 1:
-
-            print("Choose Type of Rule\n")
-            print("1.Ethernet (Layer 2)\n")
-            print("2.IPV4 Rule (layer 3)\n")
             rule_opt = int(input("Enter Your Option\n"))
 
             if rule_opt == 1:
@@ -207,12 +188,6 @@ class AdvancedFirewall:
                 if input("Want to match Source MAC? (y/n)") == "y":
                     src_mac = input("\u001b[33;1mEnter Source MAC : \u001b[0m")
                     self.all_rules["Ether_rules"]["src"].append(src_mac)
-
-            if rule_opt == 2:
-                print("\u001b[33;1mIPv4 Rule\u001b[0m\n")
-                if input("Want to match Source IP? (y/n)") == "y":
-                    src_ip = input("\u001b[33;1mEnter Source IP : \u001b[0m")
-                    self.all_rules["IPv4rules"]["src"].append(src_ip)
 
             with open("rules.json", "w") as fp:
                 json.dump(self.all_rules, fp)
@@ -243,9 +218,6 @@ if __name__ == "__main__":
 
     while True:
         if firewall_opt == "simple_firewall":
-            banner = pyfiglet.figlet_format("Simple Firewall", "standard")
-            print(banner)
-            print("\u001b[33;1m1.Start Firewall\u001b[0m\n")
             option = int(input("Enter Your Choice:\n"))
             if option == 1:
                 sf = SimpleFirewall(interface1, interface2)
@@ -253,7 +225,5 @@ if __name__ == "__main__":
             else:
                 exit(0)
         elif firewall_opt == "advanced_firewall":
-            # banner = pyfiglet.figlet_format("Advanced Firewall", "standard")
-            # print(banner)
             af = AdvancedFirewall(interface1, interface2)
             af.startFirewall()
