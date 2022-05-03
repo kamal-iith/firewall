@@ -23,7 +23,7 @@ def clean() -> None:
     os.system("cls" if os.name == "nt" else "clear")
 
 
-class SimpleFirewall:
+class BASICFIREWALL:
     def __init__(self, interface1, interface2):
         self.internal_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
         self.external_socket = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(0x0003))
@@ -40,9 +40,9 @@ class SimpleFirewall:
         return ".".join(map(str, addr))
 
     def parse_ethernet(self, raw_data):
-        dest, src, prototype = struct.unpack("!6s6sH", raw_data[:14])
-        destin_mac_addr = ":".join("%02x" % b for b in dest)
-        src_mac_addr = ":".join("%02x" % b for b in src)
+        dest_bytes, src_bytes, prototype = struct.unpack("!6s6sH", raw_data[:14])
+        destin_mac_addr = ":".join("%02x" % b for b in dest_bytes)
+        src_mac_addr = ":".join("%02x" % b for b in src_bytes)
         prototype_field = socket.htons(prototype)
         return destin_mac_addr, src_mac_addr, prototype_field
 
@@ -83,11 +83,10 @@ class SimpleFirewall:
 
     def run(self):
         while True:
-            all_socks = [self.internal_socket, self.external_socket]
-            interface_sockets, _, _ = select.select(all_socks, [], [])
+            interface_sockets, _, _ = select.select([self.internal_socket, self.external_socket], [], [])
 
-            for soc in interface_sockets:
-                raw_data, _ = soc.recvfrom(MEMORY_BUFFER)
+            for individual_socket in interface_sockets:
+                raw_data, _ = individual_socket.recvfrom(MEMORY_BUFFER)
                 ret, sip, dip = self.parse_rules(raw_data)
                 if ret:
                     print(f"Src IP: {sip}\t        Dst IP: {dip}\t\t          {bcol.OKGREEN}Allowed{bcol.ENDC}")
@@ -163,13 +162,15 @@ class Firewall:
         self.packet = f"{bcol.OKBLUE}[Ethernet]{bcol.ENDC}"
 
         destination, source, prototype = struct.unpack("!6s6sH", raw_data[:byte_len])
-        dstn_mac = ":".join("%02x" % m for m in destination)
-        src_mac = ":".join("%02x" % s for s in source)
+
+        packet_destination_mac = ":".join("%02x" % m for m in destination)
+        self.mapping_dict["dstn_mac"] = packet_destination_mac
+
+        packet_source_mac = ":".join("%02x" % s for s in source)
+        self.mapping_dict["src_mac"] = packet_source_mac
 
         ethprotocol = socket.htons(prototype)
 
-        self.mapping_dict["dstn_mac"] = dstn_mac
-        self.mapping_dict["src_mac"] = src_mac
         self.mapping_dict["etherprotocol"] = ethprotocol
         if ethprotocol == socket.ntohs(0x0800):
             self.parse_IP_headers(raw_data[14:])
@@ -184,31 +185,31 @@ class Firewall:
         self.packet += f"{bcol.OKBLUE}[IPv4]{bcol.ENDC}"
 
         iph = unpack("!BBHHHBBH4s4s", raw_data[:20])
+        self.mapping_dict["ttl"] = iph[5]
 
         version_len = iph[0]
 
         ihl = version_len & 0xF
-        ihl_len = ihl * 4
+        ip_header_length = ihl * 4
+        self.mapping_dict["header_len"] = ip_header_length
 
         ipv4protocol = iph[6]
+        self.mapping_dict["ipv4protocol"] = ipv4protocol
 
         source_addr = socket.inet_ntoa(iph[8])
-        dest_addr = socket.inet_ntoa(iph[9])
-
-        self.mapping_dict["header_len"] = ihl_len
-        self.mapping_dict["ttl"] = iph[5]
-        self.mapping_dict["ipv4protocol"] = ipv4protocol
         self.mapping_dict["src_ip"] = source_addr
+
+        dest_addr = socket.inet_ntoa(iph[9])
         self.mapping_dict["dstn_ip"] = dest_addr
 
         if ipv4protocol == 1:
-            self.parse_L3_ICMP(raw_data[ihl_len:])
+            self.parse_L3_ICMP(raw_data[ip_header_length:])
 
         elif ipv4protocol == 6:
-            self.parse_L3_TCP(raw_data[ihl_len:])
+            self.parse_L3_TCP(raw_data[ip_header_length:])
 
         elif ipv4protocol == 17:
-            self.parse_L3_UDP(raw_data[ihl_len:])
+            self.parse_L3_UDP(raw_data[ip_header_length:])
 
     def parseIPv6Head(self, raw_data):
         """Parse IPV4 Packets from raw socket packets
@@ -219,18 +220,16 @@ class Firewall:
         self.packet += f"{bcol.OKBLUE}[IPv6]{bcol.ENDC}"
         iph = struct.unpack("!HHHHHH16s16s", raw_data[:20])
 
-        traffic_class = iph[5]
-        flow_label = iph[6]
         header_len = iph[7]
-        ipv6protocol = iph[8]
-        v6source_addr = ":".join("%0x{0:X2}" % b for b in iph[9])
-        v6dest_addr = ":".join("%0x{0:X2}" % b for b in iph[10])
-
-        self.mapping_dict["traffic_class"] = traffic_class
-        self.mapping_dict["flow_label"] = flow_label
         self.mapping_dict["ipv4_header_len"] = header_len
+
+        ipv6protocol = iph[8]
         self.mapping_dict["ipv6protocol"] = ipv6protocol
+
+        v6source_addr = ":".join("%0x{0:X2}" % b for b in iph[9])
         self.mapping_dict["v6source_addr"] = v6source_addr
+
+        v6dest_addr = ":".join("%0x{0:X2}" % b for b in iph[10])
         self.mapping_dict["v6dest_addr"] = v6dest_addr
 
         if ipv6protocol == 1:
@@ -279,21 +278,18 @@ class Firewall:
     def parse_L3_TCP(self, raw_data):
         """Parsing TCP packets"""
         self.packet += f"{bcol.OKBLUE}[TCP]{bcol.ENDC}"
-        (tcpsrc_port, tcpdest_port, _, _, offset) = struct.unpack("!HHLLH", raw_data[:14])
+        (src_port, dest_port, _, _, offset) = struct.unpack("!HHLLH", raw_data[:14])
 
-        urg = (offset & 32) >> 5
+        self.mapping_dict["tcpsrc_port"] = src_port
+        self.mapping_dict["tcpdest_port"] = dest_port
+
         ack = (offset & 16) >> 4
-        rst = (offset & 4) >> 2
-        syn = (offset & 2) >> 1
-        fin = offset & 1
-
-        self.mapping_dict["tcpsrc_port"] = tcpsrc_port
-        self.mapping_dict["tcpdest_port"] = tcpdest_port
-
-        self.mapping_dict["flag_urg"] = urg
         self.mapping_dict["flag_ack"] = ack
-        self.mapping_dict["flag_rst"] = rst
+
+        syn = (offset & 2) >> 1
         self.mapping_dict["flag_syn"] = syn
+
+        fin = offset & 1
         self.mapping_dict["flag_fin"] = fin
 
     def parse_L3_UDP(self, raw_data):
@@ -303,11 +299,10 @@ class Firewall:
             raw_data (str): Packets from Raw sockets
         """
         self.packet += f"{bcol.OKBLUE}[UDP]{bcol.ENDC}"
-        pack = struct.unpack("!4H", raw_data[:8])
 
+        pack = struct.unpack("!4H", raw_data[:8])
         self.mapping_dict["udpsrc_port"] = pack[0]
         self.mapping_dict["udpdest_port"] = pack[1]
-        self.mapping_dict["udpdata_len"] = pack[2]
 
     def manageRules(self):
         """Manage Rules from "rules.json" files"""
@@ -341,9 +336,9 @@ class Firewall:
         acceptance = []
         for layer in self.rules_set.keys():
             for rule in self.rules_set[layer]:
-                for key in rule.keys():
-                    if key != "rule_id" and key != "rule":
-                        if rule[key] == self.mapping_dict[key]:
+                for identifier in rule.keys():
+                    if identifier != "rule_id" and identifier != "rule":
+                        if rule[identifier] == self.mapping_dict[identifier]:
                             acceptance.append(True)
                         else:
                             acceptance.append(False)
@@ -376,7 +371,7 @@ class Firewall:
                 all_socks = [self.internal_socket, self.external_socket]
                 interface_sockets, _, _ = select.select(all_socks, [], [])
 
-                for soc in interface_sockets:
+                for individual_socket in interface_sockets:
 
                     if time.time() - clock >= 1:
                         self.plot_allow.append(self.allowed)
@@ -384,7 +379,7 @@ class Firewall:
                         clock = time.time()
 
                     # Receive data from the raw socket
-                    raw_data, _ = soc.recvfrom(MEMORY_BUFFER)
+                    raw_data, _ = individual_socket.recvfrom(MEMORY_BUFFER)
 
                     status, ppt = self.parse_rules(raw_data)
 
@@ -487,7 +482,7 @@ def main(d: int, s: bool):
 
     # Simple Firewall
     if s:
-        simple_firewall = SimpleFirewall(interface1, interface2)
+        simple_firewall = BASICFIREWALL(interface1, interface2)
         simple_firewall.run()
     else:
 
