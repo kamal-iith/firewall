@@ -1,7 +1,0 @@
-{"restricted_src_ip": ["10.0.0.2"], 
-    "restricted_dest_ip": [], 
-    "restricted_src_ports": [], 
-    "restricted_dest_ports": [], 
-    "restricted_protocols": [], 
-    "restricted_src_mac": [], 
-    "restricted_dest_mac": []}

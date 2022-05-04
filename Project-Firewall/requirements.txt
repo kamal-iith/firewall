@@ -1,8 +1,0 @@
-IPy
-numpy
-psutil
-netaddr
-colorama
-malplotlib
-netfilterqueue
-getpass

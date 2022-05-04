@@ -1,0 +1,22 @@
+{
+    "L2": [
+        {
+            "rule_id": 168,
+            "rule": "allow"
+        }
+    ],
+    "L3V4": [
+        {
+            "rule_id": 57,
+            "src_ip": "142.250.182.14",
+            "rule": "Discard"
+        },
+        {
+            "rule_id": 57,
+            "src_ip": "192.168.130.135",
+            "rule": "allow"
+        }
+    ],
+    "L4TCP": [],
+    "L4UDP": []
+}
